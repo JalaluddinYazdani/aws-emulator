@@ -317,6 +317,8 @@ mod stream_specification_presence;
 mod stream_specification_with_other_members;
 #[path = "all/stream_unmodified_writes.rs"]
 mod stream_unmodified_writes;
+#[path = "all/substitution_key_size_bound.rs"]
+mod substitution_key_size_bound;
 #[path = "all/table_arn_resource_name_refusals.rs"]
 mod table_arn_resource_name_refusals;
 #[path = "all/table_control_plane.rs"]

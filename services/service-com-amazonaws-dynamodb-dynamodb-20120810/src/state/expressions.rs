@@ -973,7 +973,8 @@ impl<'a> Substitutions<'a> {
         Ok(())
     }
 
-    /// Every KEY a substitution table defines must BE a substitution token.
+    /// Every KEY a substitution table defines must BE a substitution token, and one no
+    /// longer than a token may be.
     ///
     /// Each table is read by the SPELLING of its keys — `ExpressionAttributeNames` holds
     /// "one or more substitution tokens for attribute names in an expression" and its keys
@@ -982,7 +983,9 @@ impl<'a> Substitutions<'a> {
     /// refused as the invalid key of that member it is. That is its OWN defect: collapsing
     /// it onto the unused-entry sentence would tell a caller to drop an entry whose
     /// spelling is the mistake, and collapsing it onto the undefined-token sentence would
-    /// point at the expression instead of at the table.
+    /// point at the expression instead of at the table. A key spelled right but over the
+    /// size bound ([`MAX_SUBSTITUTION_KEY_BYTES`]) is the same member's invalid key, named
+    /// by its size.
     ///
     /// Asked FIRST, before what the table could be substituted into
     /// ([`Substitutions::check_an_expression_was_sent`]) and before any expression is read:
@@ -1083,26 +1086,45 @@ const NAME_TOKEN_PREFIX: char = '#';
 const VALUES_MEMBER: &str = "ExpressionAttributeValues";
 const VALUE_TOKEN_PREFIX: char = ':';
 
+/// The most bytes one key of a substitution table may hold: the `#name` or `:value` token
+/// itself, prefix included. "The maximum length of any single expression attribute name
+/// or expression attribute value is 255 bytes" (Service, account, and table quotas).
+const MAX_SUBSTITUTION_KEY_BYTES: usize = 255;
+
 /// Refuse one substitution table whose keys are not all spelled as the tokens an
 /// expression substitutes them into, naming the first such key in one stable order so the
 /// same request earns the same message.
+///
+/// A key spelled as a token is refused all the same when it is longer than a token may
+/// be ([`MAX_SUBSTITUTION_KEY_BYTES`]): that refusal names the key's byte length rather
+/// than the key, which no caller could read back at that size. Spelling is asked first,
+/// so a key that is both misspelled and over-long earns the spelling sentence.
 fn check_substitution_keys<V>(
     member: &str,
     table: Option<&HashMap<String, V>>,
     prefix: char,
     enveloped: bool,
 ) -> Result<(), RequestError> {
-    let mut invalid: Vec<&str> = table
+    let mut keys: Vec<&str> = table
         .into_iter()
         .flatten()
         .map(|(key, _)| key.as_str())
-        .filter(|key| !is_substitution_token(key, prefix))
         .collect();
-    invalid.sort_unstable();
-    match invalid.first() {
-        Some(key) => Err(expression_refusal(
+    keys.sort_unstable();
+    if let Some(key) = keys.iter().find(|key| !is_substitution_token(key, prefix)) {
+        return Err(expression_refusal(
             enveloped,
             format!("{member} contains invalid key: Syntax error; key: \"{key}\""),
+        ));
+    }
+    match keys.iter().find(|key| key.len() > MAX_SUBSTITUTION_KEY_BYTES) {
+        Some(key) => Err(expression_refusal(
+            enveloped,
+            format!(
+                "{member} contains invalid key: The expression attribute map contains a key \
+                 that is too long; size of key: {}",
+                key.len()
+            ),
         )),
         None => Ok(()),
     }
